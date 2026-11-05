@@ -21,6 +21,24 @@ folio stop       # Server beenden (außerdem: start, restart, status, logs, upda
 
 Optionen: `--yes` (ohne Rückfragen), `--tex=tectonic|texlive|none`, `--port=4242`, `--service`/`--no-service`, `--no-desktop`, `--uninstall` (entfernt Befehl, Startmenü-Eintrag und Dienst – Projekte bleiben erhalten).
 
+### Windows
+
+`install.cmd` doppelklicken – oder im Terminal:
+
+```bat
+install.cmd
+```
+
+Der Installer prüft Node.js (installiert es bei Bedarf über `winget`), baut die Oberfläche, bietet Tectonic (Download nach `bin\`) oder MiKTeX (über `winget`) an und legt an:
+
+- eine Verknüpfung **Folio** auf dem **Desktop** und im **Startmenü** – startet den Server unsichtbar im Hintergrund und öffnet den Editor (in Chrome/Brave/Edge als eigenes App-Fenster)
+- den Befehl **`folio`** (`%LOCALAPPDATA%\Folio\bin`, wird zum Benutzer-PATH hinzugefügt – gilt in neu geöffneten Terminals) mit denselben Unterbefehlen wie unter Linux
+- auf Wunsch einen **Autostart**-Eintrag, der den Server beim Anmelden startet
+
+Optionen: `--yes`, `--tex=tectonic|miktex|none`, `--port=4242`, `--autostart`/`--no-autostart`, `--no-desktop`, `--no-startmenu`, `--uninstall`. Das Server-Log liegt in `%LOCALAPPDATA%\Folio\server.log` (`folio logs`).
+
+Mit MiKTeX wird `latexmk` nur genutzt, wenn Perl installiert ist (z. B. Strawberry Perl); sonst ruft Folio pdfLaTeX/BibTeX/Biber direkt auf.
+
 ### Ohne Installer
 
 ```bash
@@ -54,6 +72,7 @@ Ein ausführbares Programm in `./bin/` (z. B. `bin/tectonic`) wird ebenfalls erk
 - **SyncTeX:** Doppelklick im PDF springt zur Stelle im Code, Strg+. springt vom Code ins PDF
 - **Dateien:** Dateibaum mit Anlegen, Umbenennen, Verschieben (Drag & Drop), Hochladen; Bilder in den Editor ziehen fügt eine Abbildung ein. Gelöschtes landet in `.trash` im Projekt
 - Änderungen von außen (anderer Editor, git) werden live übernommen
+- **GitHub-Sync:** Ist der geöffnete Ordner ein Git-Repository mit Remote, wird er automatisch verknüpft: beim Öffnen und sobald neue Commits auf GitHub liegen wird gepullt (Prüfung alle 20 s), lokale Änderungen werden jede Minute committet und gepusht. Über den Branch-Knopf oben rechts gibt es „Pull“ und „Commit & Push“ (mit optionaler Nachricht) sowie den Schalter für die Automatik. Ordner ohne Repository lassen sich dort per GitHub-URL verknüpfen. Bei Konflikten wählst du, ob deine oder die GitHub-Version gilt. `.latex-out/` und `.trash/` werden nie committet. Voraussetzung: `git` ist installiert und einmal bei GitHub angemeldet (z. B. über den Git Credential Manager oder `gh auth login`).
 - Hell/Dunkel, PDF-Dunkelmodus, Gliederung, Suchen & Ersetzen, Code-Faltung
 
 ## Tastenkürzel

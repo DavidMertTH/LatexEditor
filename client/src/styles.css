@@ -1801,3 +1801,145 @@ input[type='range'] {
   cursor: default;
   user-select: none;
 }
+
+/* GitHub sync */
+.git-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 8px;
+  border-radius: var(--radius);
+  border: 0.75px solid var(--line-soft);
+  background: var(--surface-faint);
+  color: var(--muted);
+  font-weight: 700;
+  font-size: 11px;
+  max-width: 220px;
+}
+.git-pill:hover {
+  border-color: var(--line);
+  color: var(--text);
+}
+.git-pill .label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.git-pill.ok svg {
+  color: var(--green);
+}
+.git-pill.err {
+  color: var(--red);
+  border-color: color-mix(in srgb, var(--red) 50%, transparent);
+}
+.git-pill .badge {
+  font-size: 10px;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: var(--surface-soft);
+  color: var(--text);
+}
+.spin {
+  animation: spin 0.9s linear infinite;
+}
+.git-body {
+  width: 320px;
+}
+.git-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.git-head > svg {
+  margin-top: 2px;
+  flex: none;
+}
+.git-repo {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.git-repo a {
+  color: var(--accent-fg);
+  font-weight: 700;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  overflow-wrap: anywhere;
+}
+.git-repo a:hover {
+  text-decoration: underline;
+}
+.git-repo small {
+  color: var(--muted);
+  font-size: 10.5px;
+  margin-top: 2px;
+}
+.git-text {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.git-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--dim);
+}
+.git-stats .on {
+  color: var(--text);
+}
+.git-alert {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border-radius: var(--radius);
+  background: var(--red-soft);
+  color: var(--text);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.git-alert b {
+  color: var(--red);
+}
+.git-actions {
+  display: flex;
+  gap: 8px;
+}
+.git-actions .btn {
+  flex: 1;
+  justify-content: center;
+}
+
+.git-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.git-side {
+  flex: none;
+  max-height: 55%;
+}
+.git-side .side-scroll {
+  padding-top: 4px;
+}
+.side-head.clickable {
+  cursor: pointer;
+  user-select: none;
+}
+.side-head.clickable span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.git-repo b {
+  overflow-wrap: anywhere;
+}
+.git-side .side-scroll {
+  overflow-x: hidden;
+}

@@ -21,6 +21,7 @@ import {
   Sun,
   Moon,
   Monitor,
+  ChevronRight,
 } from 'lucide-react';
 import { api, type CompileResult, type Engine, type LogEntry, type ProjectIndex, type Settings, type TreeNode } from '../api';
 import { EditorController, type EditorMode } from '../editor/controller';
@@ -29,6 +30,7 @@ import { FileTree, fileIcon } from './FileTree';
 import { FormatBar } from './FormatBar';
 import { PdfViewer, type PdfViewerHandle } from './PdfViewer';
 import { LogPanel } from './LogPanel';
+import { GitPanel, GitPill, useGitSync } from './GitSync';
 import { Menu, Popover, Segmented, usePersistentState, useDialogs, modKey, type ThemePref } from '../ui';
 import { flatten } from '../tree';
 
@@ -36,13 +38,13 @@ type Layout = 'editor' | 'split' | 'pdf';
 type OutlineItem = { level: number; title: string; line: number };
 
 const BINARY = /\.(png|jpe?g|gif|webp|svg|pdf|eps|ico|bmp|zip|gz)$/i;
-const LEVELS: Record<string, number> = { part: 0, chapter: 1, section: 2, subsection: 3, subsubsection: 4, paragraph: 5 };
+const LEVELS: Record<string, number> = { part: 0, chapter: 1, section: 2, subsection: 3, subsubsection: 4, paragraph: 5, addpart: 0, addchap: 1, addsec: 2, minisec: 5 };
 
 function computeOutline(text: string): OutlineItem[] {
   const out: OutlineItem[] = [];
   const lines = text.split('\n');
   lines.forEach((l, i) => {
-    const m = /^\s*\\(part|chapter|section|subsection|subsubsection|paragraph)\*?\s*(?:\[[^\]]*\])?\{(.*)\}/.exec(l);
+    const m = /^\s*\\(part|chapter|section|subsection|subsubsection|paragraph|addpart|addchap|addsec|minisec)\*?\s*(?:\[[^\]]*\])?\{(.*)\}/.exec(l);
     if (m) out.push({ level: LEVELS[m[1]], title: m[2].replace(/\\[a-zA-Z]+\{([^}]*)\}/g, '$1').replace(/[{}\\$]/g, '') || '…', line: i + 1 });
     const fm = /^\s*\\begin\{frame\}(?:\[[^\]]*\])?\{([^}]*)\}/.exec(l);
     if (fm) out.push({ level: 3, title: fm[1], line: i + 1 });
@@ -78,6 +80,8 @@ export function Workspace({ projectId, onClose, theme, setTheme }: { projectId: 
   const [dragging, setDragging] = useState(false);
   const [dropActive, setDropActive] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [gitAnchor, setGitAnchor] = useState<HTMLElement | null>(null);
+  const [gitOpen, setGitOpen] = usePersistentState('folio.gitPanel', true);
   const [, force] = useState(0);
 
   const hostRef = useRef<HTMLDivElement>(null);
@@ -377,6 +381,21 @@ export function Workspace({ projectId, onClose, theme, setTheme }: { projectId: 
     }
   };
 
+  // ── files changed by a git pull ─────────────────────────────────────────
+  const onPulled = async (paths: string[]) => {
+    for (const p of paths) {
+      if (!controller.has(p) || saveTimers.current.has(p)) continue;
+      const r = await api.readFile(projectId, p).catch(() => null);
+      if (!r) continue;
+      controller.setContent(p, r.content);
+      if (p === activeRef.current) setOutline(computeOutline(r.content));
+    }
+    refreshTree();
+    if (settingsRef.current?.autoCompile && paths.some((p) => /\.(tex|bib|sty|cls|png|jpe?g|pdf)$/i.test(p))) scheduleCompile();
+  };
+
+  const git = useGitSync(projectId, () => flushSaves(), onPulled);
+
   const jumpToEntry = (e: LogEntry) => {
     if (!e.file) return;
     if (layout === 'pdf') setLayout('split');
@@ -590,6 +609,7 @@ export function Workspace({ projectId, onClose, theme, setTheme }: { projectId: 
           />
         </div>
         <div className="right">
+          <GitPill git={git} onClick={(e) => setGitAnchor(gitAnchor ? null : e.currentTarget)} />
           {result && (
             <button className={`issue-pill ${!errors && !warnings ? 'ok' : ''}`} onClick={() => setLogOpen(!logOpen)} title="Protokoll anzeigen">
               {!errors && !warnings ? (
@@ -654,6 +674,14 @@ export function Workspace({ projectId, onClose, theme, setTheme }: { projectId: 
               { label: 'Protokoll anzeigen', icon: <AlertCircle size={14} />, onClick: () => setLogOpen(true), disabled: !result },
             ]}
           />
+        </Popover>
+      )}
+
+      {gitAnchor && (
+        <Popover anchor={gitAnchor} onClose={() => setGitAnchor(null)} align="end">
+          <div className="settings-body git-body">
+            <GitPanel git={git} autoFocus />
+          </div>
         </Popover>
       )}
 
@@ -756,6 +784,19 @@ export function Workspace({ projectId, onClose, theme, setTheme }: { projectId: 
                 </div>
               ))}
             </div>
+          </div>
+          <div className="side-divider" />
+          <div className="side-section git-side">
+            <div className="side-head clickable" onClick={() => setGitOpen(!gitOpen)}>
+              <span>
+                {gitOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />} GitHub
+              </span>
+            </div>
+            {gitOpen && (
+              <div className="side-scroll">
+                <GitPanel git={git} />
+              </div>
+            )}
           </div>
         </aside>
 

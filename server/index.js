@@ -10,6 +10,7 @@ import { compile, cancelCompile, availableEngines, defaultEngine, detectTools, O
 import { loadSynctex, forward, inverse } from './synctex.js';
 import { buildIndex } from './indexer.js';
 import { TEMPLATES } from './templates.js';
+import * as gitSync from './git.js';
 import { encodeId, decodeId, safeJoin, exists, readJson, writeJson, walk, isTextFile, IGNORED_NAMES } from './util.js';
 
 const APP_ROOT = path.resolve(import.meta.dirname, '..');
@@ -370,6 +371,35 @@ app.get(
     const data = await loadSynctex(path.join(root, OUT_DIR), path.basename(settings.mainFile, '.tex'), root);
     if (!data) throw httpError(404, 'Keine SyncTeX-Daten – bitte zuerst kompilieren');
     res.json(inverse(data, Number(req.query.page), Number(req.query.x), Number(req.query.y)) || null);
+  }),
+);
+
+// ── git / GitHub ───────────────────────────────────────────────────────────
+app.get(
+  '/api/p/:id/git',
+  wrap(async (req, res) => {
+    res.json(await gitSync.status(projectRoot(req)));
+  }),
+);
+
+app.post(
+  '/api/p/:id/git/pull',
+  wrap(async (req, res) => {
+    res.json(await gitSync.pull(projectRoot(req), { prefer: req.body?.prefer }));
+  }),
+);
+
+app.post(
+  '/api/p/:id/git/sync',
+  wrap(async (req, res) => {
+    res.json(await gitSync.sync(projectRoot(req), { message: req.body?.message, prefer: req.body?.prefer }));
+  }),
+);
+
+app.post(
+  '/api/p/:id/git/link',
+  wrap(async (req, res) => {
+    res.json(await gitSync.link(projectRoot(req), req.body?.url));
   }),
 );
 

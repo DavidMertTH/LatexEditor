@@ -38,6 +38,7 @@ interface CmdItem {
   argTo: number; // position of closing brace
   opt?: string;
   arg2?: { from: number; to: number }; // second argument (href)
+  kind?: 'decl' | 'layout' | 'macro';
 }
 interface Parsed {
   preamble: { from: number; to: number; docclass: string; pkgCount: number } | null;
@@ -55,9 +56,22 @@ interface Parsed {
   cmds: CmdItem[];
   masked: Uint8Array; // 1 = inside comment/math/verbatim/table relative to bodyFrom
   headings: { level: number; title: string }[];
+  text: string;
 }
 
-const HEADING_LEVEL: Record<string, number> = { part: 0, chapter: 1, section: 2, subsection: 3, subsubsection: 4, paragraph: 5, subparagraph: 6 };
+const HEADING_LEVEL: Record<string, number> = { part: 0, chapter: 1, section: 2, subsection: 3, subsubsection: 4, paragraph: 5, subparagraph: 6, addpart: 0, addchap: 1, addsec: 2, minisec: 5 };
+// KOMA-Script headings look like their standard counterparts
+const HEADING_CLASS: Record<string, string> = { addpart: 'part', addchap: 'chapter', addsec: 'section', minisec: 'paragraph' };
+const HEADING_LINE = new RegExp(`^\\s*\\\\(${Object.keys(HEADING_LEVEL).join('|')})(\\*?)\\s*(\\[[^\\]]*\\])?\\{`);
+// Declarations that change the font for the rest of the enclosing group: {\Large Text}
+const SIZE_DECL: Record<string, number> = { tiny: 0.6, scriptsize: 0.7, footnotesize: 0.8, small: 0.9, normalsize: 1, large: 1.2, Large: 1.44, LARGE: 1.73, huge: 2.07, Huge: 2.49 };
+const STYLE_DECL: Record<string, string> = { bfseries: 'vm-bold', itshape: 'vm-italic', slshape: 'vm-italic', em: 'vm-italic', ttfamily: 'vm-mono', scshape: 'vm-smallcaps', sffamily: 'vm-sans', rmfamily: '', upshape: '', mdseries: '', normalfont: '' };
+// Pure layout commands without visible content – hidden in visual mode
+const LAYOUT_NOARG = /^(par|noindent|indent|centering|raggedright|raggedleft|vfill|hfill|smallskip|medskip|bigskip|newline|linebreak|nolinebreak|phantomsection|null|protect|relax|frontmatter|mainmatter|backmatter|FloatBarrier)$/;
+const LAYOUT_ARGS: Record<string, number> = { vspace: 1, hspace: 1, pagenumbering: 1, thispagestyle: 1, pagestyle: 1, setcounter: 2, addtocounter: 2, setlength: 2, addtolength: 2, addcontentsline: 3, pdfbookmark: 2, bookmark: 1, hypersetup: 1, enlargethispage: 1, linespread: 1, markboth: 2, markright: 1 };
+const LAYOUT_ASSIGN = /^(hyphenpenalty|exhyphenpenalty|tolerance|pretolerance|emergencystretch|clubpenalty|widowpenalty|displaywidowpenalty|parindent|parskip|baselineskip)$/;
+// Macro bodies that draw something rather than produce text are shown as a chip
+const GRAPHICAL_MACRO = /\\(rule|hbox|vbox|makebox|framebox|fbox|color|includegraphics|tikz|begin|vspace|hspace|vskip|hskip|par|noindent|raisebox|put|special|hrule|vrule|leaders)\b/;
 const FORMAT_CLASS: Record<string, string> = {
   textbf: 'vm-bold',
   textit: 'vm-italic',
@@ -259,15 +273,55 @@ function parse(doc: Text): Parsed {
     if (m.index > 0 && text[m.index - 1] === '\\' && (m.index < 2 || text[m.index - 2] !== '\\')) continue;
     const name = m[1];
     let p = m.index + m[0].length;
+    const after = (q: number) => (text.startsWith('{}', q) ? q + 2 : q);
+    if (name in SIZE_DECL || name in STYLE_DECL || LAYOUT_NOARG.test(name)) {
+      const to = after(p);
+      cmds.push({ name, from: m.index, to, argFrom: to, argTo: to, kind: LAYOUT_NOARG.test(name) ? 'layout' : 'decl' });
+      continue;
+    }
+    if (LAYOUT_ASSIGN.test(name)) {
+      // \hyphenpenalty=10000, \parindent0pt
+      const a = /^[ \t]*=?[ \t]*-?[\d.]+[ \t]*(?:pt|mm|cm|em|ex|in|bp|sp)?|^[ \t]*=?[ \t]*\\[A-Za-z]+/.exec(text.slice(p, p + 40));
+      const to = a ? p + a[0].length : p;
+      cmds.push({ name, from: m.index, to, argFrom: to, argTo: to, kind: 'layout' });
+      continue;
+    }
+    if (name in LAYOUT_ARGS) {
+      let q = p;
+      while (text[q] === ' ') q++;
+      if (text[q] === '[') q = matchBrace(text, q, '[', ']') + 1;
+      let ok = q > 0;
+      for (let k = 0; ok && k < LAYOUT_ARGS[name]; k++) {
+        while (text[q] === ' ') q++;
+        const e = text[q] === '{' ? matchBrace(text, q) : -1;
+        if (e < 0 || e > bodyTo) ok = false;
+        else q = e + 1;
+      }
+      if (ok) cmds.push({ name: name + m[2], from: m.index, to: q, argFrom: q, argTo: q, kind: 'layout' });
+      continue;
+    }
+    const def = Object.prototype.hasOwnProperty.call(macros, '\\' + name) ? macros['\\' + name] : undefined;
+    if (def !== undefined && !(name in HEADING_LEVEL) && !(name in FORMAT_CLASS) && !CHIP_CMDS.test(name)) {
+      const nargs = Math.max(0, ...[...def.matchAll(/#(\d)/g)].map((x) => +x[1]));
+      if (nargs === 0) {
+        const to = after(p);
+        cmds.push({ name, from: m.index, to, argFrom: to, argTo: to, kind: 'macro' });
+      } else if (nargs === 1) {
+        while (text[p] === ' ') p++;
+        const close = text[p] === '{' ? matchBrace(text, p) : -1;
+        if (close > 0 && close <= bodyTo) cmds.push({ name, from: m.index, to: close + 1, argFrom: p + 1, argTo: close, kind: 'macro' });
+      }
+      continue;
+    }
     const known =
       name in HEADING_LEVEL ||
       name in FORMAT_CLASS ||
       CHIP_CMDS.test(name) ||
-      /^(footnote|url|href|caption|includegraphics|textcolor|LaTeX|TeX|ldots|dots|today|maketitle|tableofcontents|listoffigures|listoftables|bibliography|printbibliography|newpage|clearpage|pagebreak|item|frametitle|euro|S|copyright|quad|qquad|textbackslash)$/.test(name);
+      /^(footnote|url|href|caption|includegraphics|textcolor|LaTeX|TeX|ldots|dots|today|maketitle|tableofcontents|listoffigures|listoftables|bibliography|printbibliography|newpage|clearpage|cleardoublepage|pagebreak|item|frametitle|euro|S|copyright|quad|qquad|textbackslash|input|include|subfile)$/.test(name);
     if (!known) continue;
     let opt: string | undefined;
     // Commands without arguments
-    if (/^(LaTeX|TeX|ldots|dots|today|maketitle|tableofcontents|listoffigures|listoftables|printbibliography|newpage|clearpage|pagebreak|item|euro|S|copyright|quad|qquad|textbackslash)$/.test(name)) {
+    if (/^(LaTeX|TeX|ldots|dots|today|maketitle|tableofcontents|listoffigures|listoftables|printbibliography|newpage|clearpage|cleardoublepage|pagebreak|item|euro|S|copyright|quad|qquad|textbackslash)$/.test(name)) {
       let to = p;
       if (text.startsWith('{}', to)) to += 2;
       cmds.push({ name, from: m.index, to, argFrom: to, argTo: to });
@@ -314,6 +368,7 @@ function parse(doc: Text): Parsed {
     cmds,
     masked,
     headings,
+    text,
   };
   parseCache.set(doc, parsed);
   return parsed;
@@ -393,15 +448,17 @@ class TextWidget extends ClickWidget {
   constructor(
     readonly html: string,
     readonly cls = '',
+    readonly title = '',
   ) {
     super();
   }
   eq(o: TextWidget) {
-    return o.html === this.html && o.cls === this.cls;
+    return o.html === this.html && o.cls === this.cls && o.title === this.title;
   }
   toDOM() {
     const el = document.createElement('span');
     if (this.cls) el.className = this.cls;
+    if (this.title) el.title = this.title;
     el.innerHTML = this.html;
     return el;
   }
@@ -537,6 +594,45 @@ class ImageWidget extends ClickWidget {
 
 // ── decoration building ──────────────────────────────────────────────────
 const hide = Decoration.replace({});
+
+/** Replace argument-less user macros by their definition (a few levels deep). */
+function expandMacros(src: string, macros: Record<string, string>, depth = 3): string {
+  if (depth <= 0) return src;
+  return src.replace(/\\([A-Za-z]+)(?![A-Za-z])/g, (all, name: string) => {
+    const def = Object.prototype.hasOwnProperty.call(macros, '\\' + name) ? macros['\\' + name] : undefined;
+    return def !== undefined && !/#\d/.test(def) ? expandMacros(def, macros, depth - 1) : all;
+  });
+}
+
+const FORMAT_IN_DEF: [RegExp, string][] = [
+  [/\\(textit|emph|textsl|itshape)\b/, 'vm-italic'],
+  [/\\(textbf|bfseries)\b/, 'vm-bold'],
+  [/\\(texttt|ttfamily)\b/, 'vm-mono'],
+  [/\\(textsc|scshape)\b/, 'vm-smallcaps'],
+  [/\\underline\b/, 'vm-underline'],
+];
+
+/**
+ * The group a declaration like \Large applies to: `{` … `}` around `pos` within the same paragraph.
+ * `bare` is false when the braces belong to a command argument (\textbf{\large x}).
+ */
+function enclosingGroup(text: string, pos: number, min: number): { open: number; close: number; bare: boolean } | null {
+  let depth = 0;
+  for (let i = pos - 1; i >= min; i--) {
+    const ch = text[i];
+    if (ch === '\n' && text[i - 1] === '\n') return null;
+    if ((ch !== '{' && ch !== '}') || text[i - 1] === '\\') continue;
+    if (ch === '}') depth++;
+    else if (depth > 0) depth--;
+    else {
+      const close = matchBrace(text, i);
+      if (close < pos) return null;
+      const before = text.slice(Math.max(min, i - 80), i);
+      return { open: i, close, bare: !/(\\[A-Za-z]+\*?[ \t]*(\[[^\]]*\])?|[}\]])$/.test(before) };
+    }
+  }
+  return null;
+}
 
 function imageWidth(opt: string | undefined): string {
   if (!opt) return '';
@@ -688,8 +784,8 @@ function buildDecorations(state: EditorState): { decorations: DecorationSet; ato
     }
 
     // headings
-    const head = /^\s*\\(part|chapter|section|subsection|subsubsection|paragraph|subparagraph)(\*?)\s*(\[[^\]]*\])?\{/.exec(text);
-    if (head) classes.push('vm-h', 'vm-h-' + head[1]);
+    const head = HEADING_LINE.exec(text);
+    if (head) classes.push('vm-h', 'vm-h-' + (HEADING_CLASS[head[1]] ?? head[1]));
 
     // list items
     if (listDepth > 0) {
@@ -735,6 +831,61 @@ function buildDecorations(state: EditorState): { decorations: DecorationSet; ato
     const touched = touches(c.from, c.to);
     const ln = lineOf(c.from);
     const wholeLine = isWholeLines(c.from, c.to);
+    // swallow one following space so hidden commands leave no gap: "\bfseries Text"
+    const trail = c.to < p.bodyTo && p.text[c.to] === ' ' && c.argTo === c.to ? 1 : 0;
+
+    if (c.kind === 'decl' || c.kind === 'layout') {
+      if (touched) {
+        decos.push(Decoration.mark({ class: 'vm-src' }).range(c.from, c.to));
+        continue;
+      }
+      if (c.kind === 'layout' && wholeLine) {
+        replace(ln.from, ln.to, Decoration.replace({ block: true, widget: new HiddenLineWidget(ln.text) }));
+        continue;
+      }
+      replace(c.from, c.to + trail, hide);
+      if (c.kind === 'decl') {
+        const g = enclosingGroup(p.text, c.from, p.bodyFrom);
+        if (g) {
+          if (g.bare && !touches(g.open, g.open + 1) && !touches(g.close, g.close + 1)) {
+            replace(g.open, g.open + 1, hide);
+            replace(g.close, g.close + 1, hide);
+          }
+          const size = SIZE_DECL[base];
+          const cls = STYLE_DECL[base];
+          if (g.close > c.to && (size || cls)) {
+            decos.push(Decoration.mark({ inclusive: true, class: cls || undefined, attributes: size && size !== 1 ? { style: `font-size:${size}em` } : undefined }).range(c.to, g.close));
+          }
+        }
+      }
+      continue;
+    }
+
+    if (c.kind === 'macro') {
+      const def = p.macros['\\' + base] ?? '';
+      const expanded = expandMacros(def, p.macros);
+      if (c.argTo === c.to) {
+        // \worktitle → its text; drawing macros like \brandbar → chip with the name
+        if (touched) {
+          decos.push(Decoration.mark({ class: 'vm-src' }).range(c.from, c.to));
+          continue;
+        }
+        const html = GRAPHICAL_MACRO.test(expanded) ? '' : renderInline(expanded, p.macros);
+        const widget = html.trim() ? new TextWidget(html, 'vm-macro', `\\${base}`) : new TextWidget(escapeHtml(base), 'vm-chip vm-chip-macro', `\\${base}`);
+        replace(c.from, c.to, Decoration.replace({ widget }));
+        continue;
+      }
+      // one argument: \placeholder{Text} with \newcommand{\placeholder}[1]{\textit{[#1]}}
+      const parts = expanded.split('#1');
+      if (parts.length !== 2 || GRAPHICAL_MACRO.test(expanded)) continue;
+      const pre = renderInline(parts[0], p.macros);
+      const post = renderInline(parts[1], p.macros);
+      replace(c.from, c.argFrom, pre ? Decoration.replace({ widget: new TextWidget(pre, 'vm-macro-affix', `\\${base}`) }) : hide);
+      replace(c.argTo, c.to, post ? Decoration.replace({ widget: new TextWidget(post, 'vm-macro-affix', `\\${base}`) }) : hide);
+      const cls = FORMAT_IN_DEF.filter(([re]) => re.test(parts[0])).map(([, k]) => k);
+      if (c.argTo > c.argFrom) decos.push(Decoration.mark({ inclusive: true, class: ['vm-macro-arg', ...cls].join(' '), attributes: { title: `\\${base}` } }).range(c.argFrom, c.argTo));
+      continue;
+    }
 
     if (base in HEADING_LEVEL) {
       replace(c.from, c.argFrom, hide);
@@ -745,7 +896,7 @@ function buildDecorations(state: EditorState): { decorations: DecorationSet; ato
       replace(c.from, c.argFrom, hide);
       replace(c.argTo, c.to, hide);
       const cls = FORMAT_CLASS[base];
-      if (cls && c.argTo > c.argFrom) decos.push(Decoration.mark({ class: cls }).range(c.argFrom, c.argTo));
+      if (cls && c.argTo > c.argFrom) decos.push(Decoration.mark({ class: cls, inclusive: true }).range(c.argFrom, c.argTo));
       continue;
     }
     if (CHIP_CMDS.test(base)) {
@@ -830,8 +981,17 @@ function buildDecorations(state: EditorState): { decorations: DecorationSet; ato
         replace(ln.from, ln.to, Decoration.replace({ block: true, widget: new BlockHtmlWidget(`<span>${label}</span>`, 'vm-placeholder') }));
         break;
       }
+      case 'input':
+      case 'include':
+      case 'subfile': {
+        if (touched || !wholeLine) break;
+        const file = doc.sliceString(c.argFrom, c.argTo).trim();
+        replace(ln.from, ln.to, Decoration.replace({ block: true, widget: new BlockHtmlWidget(`<span>↳ ${escapeHtml(file)}</span>`, 'vm-placeholder vm-include') }));
+        break;
+      }
       case 'newpage':
       case 'clearpage':
+      case 'cleardoublepage':
       case 'pagebreak': {
         if (touched || !wholeLine) break;
         replace(ln.from, ln.to, Decoration.replace({ block: true, widget: new BlockHtmlWidget('<span>Seitenumbruch</span>', 'vm-pagebreak') }));
@@ -849,7 +1009,7 @@ function buildDecorations(state: EditorState): { decorations: DecorationSet; ato
 
   // Small typographic niceties in plain text
   const body = doc.sliceString(p.bodyFrom, p.bodyTo);
-  const typo = /\\\\(\[[^\]]*\])?|---|--|``|''|~|\\[%&$#_{}]|\\,/g;
+  const typo = /\\\\(\[[^\]]*\])?|---|--|``|''|~|\\[%&$#_{} ]|\\,/g;
   let t: RegExpExecArray | null;
   while ((t = typo.exec(body))) {
     const from = p.bodyFrom + t.index;
@@ -925,7 +1085,7 @@ function renderTable(spec: string, body: string, macros: Record<string, string>)
       const mc = /^\s*\\multicolumn\{(\d+)\}\{([^}]*)\}/.exec(cell);
       const span = mc ? ` colspan="${mc[1]}"` : '';
       const align = mc ? (/r/.test(mc[2]) ? 'right' : /c/.test(mc[2]) ? 'center' : 'left') : aligns[i] ?? 'left';
-      html += `<td${span} style="text-align:${align}">${renderInline(cell.trim(), macros)}</td>`;
+      html += `<td${span} style="text-align:${align}">${renderInline(expandMacros(cell.trim(), macros), macros)}</td>`;
     });
     html += '</tr>';
   }

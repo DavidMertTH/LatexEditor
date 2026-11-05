@@ -7,9 +7,10 @@ function normalize(file, root) {
   if (!file) return null;
   let f = file.trim().replace(/^"|"$/g, '');
   if (path.isAbsolute(f)) {
-    if (!f.startsWith(root)) return null; // system files (packages) are not interesting for the editor
-    f = path.relative(root, f);
+    f = path.relative(root, f); // also copes with C:/ vs C:\ and drive-letter case on Windows
+    if (f.startsWith('..') || path.isAbsolute(f)) return null; // system files (packages) are not interesting for the editor
   }
+  if (path.sep === '\\') f = f.replace(/\\/g, '/');
   f = f.replace(/^\.\//, '');
   if (f.startsWith('.latex-out/')) return null;
   // files outside the project (packages from the TeX distribution) are not editable
@@ -43,7 +44,7 @@ export function parseLog(log, root) {
     const line = lines[i];
 
     // file-line-error style: ./main.tex:12: Undefined control sequence.
-    const fle = line.match(/^((?:\.{0,2}\/|[A-Za-z]:\\)?[^:\s][^:]*\.[a-z]{2,5}):(\d+): (.*)$/i);
+    const fle = line.match(/^((?:\.{0,2}\/|[A-Za-z]:[\\/])?[^:\s][^:]*\.[a-z]{2,5}):(\d+): (.*)$/i);
     if (fle) {
       const file = normalize(fle[1], root) ?? current();
       let message = fle[3];
@@ -110,7 +111,7 @@ function collectContext(lines, start) {
   while (j < lines.length && out.length < 8) {
     const l = lines[j];
     if (l.trim() === '' && out.length > 0) break;
-    if (/^(?:\.{0,2}\/|[A-Za-z]:\\)?[^:\s][^:]*\.[a-z]{2,5}:\d+: /.test(l) || l.startsWith('! ')) break;
+    if (/^(?:\.{0,2}\/|[A-Za-z]:[\\/])?[^:\s][^:]*\.[a-z]{2,5}:\d+: /.test(l) || l.startsWith('! ')) break;
     out.push(l);
     j++;
   }

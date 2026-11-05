@@ -505,6 +505,31 @@
   font-family: inherit;
 }
 
+/* user macros */
+.vm-macro {
+  border-bottom: 1px dotted color-mix(in srgb, var(--accent) 55%, transparent);
+}
+.vm-chip-macro {
+  background: var(--surface-faint);
+  color: var(--dim);
+  font-weight: 500;
+}
+.vm-chip-macro::before {
+  content: '\\';
+  opacity: 0.7;
+}
+.vm-placeholder.vm-include {
+  margin: 4px 0;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 500;
+  font-size: 0.75em;
+  font-family: var(--font-mono);
+}
+.vm-placeholder.vm-include::before {
+  display: none;
+}
+
 /* chips */
 .vm-chip {
   display: inline-block;

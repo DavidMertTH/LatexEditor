@@ -47,6 +47,24 @@ export type Info = {
   templates: { id: string; name: string; description: string }[];
 };
 
+export type GitStatus = {
+  available: boolean;
+  repo: boolean;
+  remote?: string | null;
+  url?: string | null;
+  web?: string | null;
+  branch?: string | null;
+  upstream?: string | null;
+  ahead?: number;
+  behind?: number;
+  dirty?: number;
+  lastCommit?: { hash: string; time: number; message: string } | null;
+  busy?: boolean;
+};
+
+export type GitPrefer = 'mine' | 'remote';
+export type GitResult = { status: GitStatus; pulled?: string[]; pushed?: boolean; committed?: boolean; conflict?: boolean };
+
 async function req<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, init);
   const ct = res.headers.get('content-type') || '';
@@ -87,6 +105,10 @@ export const api = {
     req<{ page: number; rects: { x: number; y: number; w: number; h: number }[]; line: number } | null>(`/api/p/${id}/synctex/forward?file=${enc(file)}&line=${line}`),
   inverse: (id: string, page: number, x: number, y: number) =>
     req<{ file: string; line: number } | null>(`/api/p/${id}/synctex/inverse?page=${page}&x=${x}&y=${y}`),
+  gitStatus: (id: string) => req<GitStatus>(`/api/p/${id}/git`),
+  gitPull: (id: string, prefer?: GitPrefer) => req<GitResult>(`/api/p/${id}/git/pull`, json('POST', { prefer })),
+  gitSync: (id: string, message?: string, prefer?: GitPrefer) => req<GitResult>(`/api/p/${id}/git/sync`, json('POST', { message, prefer })),
+  gitLink: (id: string, url: string) => req<GitResult>(`/api/p/${id}/git/link`, json('POST', { url })),
   rawUrl: (id: string, path: string) => `/api/p/${id}/raw/${path.split('/').map(enc).join('/')}`,
   outputUrl: (id: string, file: string, v?: number | null, download = false) =>
     `/api/p/${id}/output/${enc(file)}?v=${v ?? Date.now()}${download ? '&download=1' : ''}`,

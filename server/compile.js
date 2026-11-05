@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { accessSync, constants } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -7,18 +7,35 @@ import { exists } from './util.js';
 
 export const OUT_DIR = '.latex-out';
 
+const IS_WINDOWS = process.platform === 'win32';
+
 function which(bin) {
   // A binary in ./bin (e.g. a downloaded tectonic) takes precedence over $PATH.
   const dirs = [path.resolve(import.meta.dirname, '..', 'bin'), ...(process.env.PATH || '').split(path.delimiter)];
+  // Windows: only real executables – .bat/.cmd cannot be spawned without a shell.
+  const names = IS_WINDOWS ? [bin + '.exe'] : [bin];
   for (const dir of dirs) {
     if (!dir) continue;
-    const candidate = path.join(dir, bin);
-    try {
-      accessSync(candidate, constants.X_OK);
-      return candidate;
-    } catch {}
+    for (const name of names) {
+      const candidate = path.join(dir.replace(/^"|"$/g, ''), name);
+      try {
+        accessSync(candidate, constants.X_OK);
+        return candidate;
+      } catch {}
+    }
   }
   return null;
+}
+
+// MiKTeX ships latexmk.exe, but it only works if Perl is installed – check once per binary.
+const latexmkWorks = new Map();
+function usableLatexmk(bin) {
+  if (!bin || !IS_WINDOWS) return bin;
+  if (!latexmkWorks.has(bin)) {
+    const r = spawnSync(bin, ['-v'], { windowsHide: true, timeout: 30000, stdio: 'ignore' });
+    latexmkWorks.set(bin, r.status === 0);
+  }
+  return latexmkWorks.get(bin) ? bin : null;
 }
 
 let toolCache = null;
@@ -26,8 +43,19 @@ export function detectTools(refresh = false) {
   if (toolCache && !refresh) return toolCache;
   const t = {};
   for (const bin of ['latexmk', 'pdflatex', 'xelatex', 'lualatex', 'tectonic', 'bibtex', 'biber']) t[bin] = which(bin);
+  t.latexmk = usableLatexmk(t.latexmk);
   toolCache = t;
   return t;
+}
+
+// Windows: kill() only ends latexmk itself, its pdflatex children would keep the output files locked.
+function killTree(child, signal = 'SIGTERM') {
+  child.killedByUs = true;
+  if (IS_WINDOWS && child.pid) {
+    spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }).on('error', () => child.kill());
+  } else {
+    child.kill(signal);
+  }
 }
 
 export function availableEngines() {
@@ -51,6 +79,7 @@ function run(cmd, args, opts, onOutput) {
   return new Promise((resolve) => {
     const child = spawn(cmd, args, {
       ...opts,
+      windowsHide: true,
       env: {
         ...process.env,
         max_print_line: '10000',
@@ -67,7 +96,7 @@ function run(cmd, args, opts, onOutput) {
     };
     child.stdout.on('data', onData);
     child.stderr.on('data', onData);
-    const timer = setTimeout(() => child.kill('SIGKILL'), opts.timeout ?? 180000);
+    const timer = setTimeout(() => killTree(child, 'SIGKILL'), opts.timeout ?? 180000);
     child.on('error', (err) => {
       clearTimeout(timer);
       resolve({ code: -1, out: out + `\n${err.message}`, killed: false });
@@ -75,7 +104,7 @@ function run(cmd, args, opts, onOutput) {
     child.on('close', (code, signal) => {
       clearTimeout(timer);
       if (running.get(opts.cwd) === child) running.delete(opts.cwd);
-      resolve({ code, out, killed: signal === 'SIGTERM' || signal === 'SIGKILL' });
+      resolve({ code, out, killed: !!child.killedByUs || signal === 'SIGTERM' || signal === 'SIGKILL' });
     });
   });
 }
@@ -83,7 +112,7 @@ function run(cmd, args, opts, onOutput) {
 export function cancelCompile(root) {
   const child = running.get(root);
   if (child) {
-    child.kill('SIGTERM');
+    killTree(child);
     running.delete(root);
     return true;
   }
@@ -139,7 +168,7 @@ export async function compile(root, { mainFile, engine }) {
       output += '\n' + b.out;
       ranBib = true;
     } else if (/\\bibdata\{/.test(aux) && tools.bibtex) {
-      const b = await run(tools.bibtex, [jobBase], { cwd: outDir, env: { BIBINPUTS: `${root}:`, BSTINPUTS: `${root}:` } });
+      const b = await run(tools.bibtex, [jobBase], { cwd: outDir, env: { BIBINPUTS: `${root}${path.delimiter}`, BSTINPUTS: `${root}${path.delimiter}` } });
       output += '\n' + b.out;
       ranBib = true;
     }
@@ -191,9 +220,12 @@ function normalizeFile(f, root) {
 }
 
 function missingEngine(engine) {
+  const hint = IS_WINDOWS
+    ? 'Installiere z. B. MiKTeX (winget install MiKTeX.MiKTeX) oder Tectonic (install.cmd --tex=tectonic) und starte Folio neu.'
+    : 'Installiere z. B. TeX Live (sudo pacman -S texlive-basic texlive-latex texlive-latexrecommended texlive-latexextra texlive-fontsrecommended texlive-langgerman texlive-binextra) oder Tectonic (sudo pacman -S tectonic).';
   return {
     status: 'error',
-    message: `Kein LaTeX-Compiler für „${engine}“ gefunden. Installiere z. B. TeX Live (sudo pacman -S texlive-basic texlive-latex texlive-latexrecommended texlive-latexextra texlive-fontsrecommended texlive-langgerman texlive-binextra) oder Tectonic (sudo pacman -S tectonic).`,
+    message: `Kein LaTeX-Compiler für „${engine}“ gefunden. ${hint}`,
     errors: [],
     warnings: [],
     typesetting: [],
