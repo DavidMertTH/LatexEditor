@@ -1,0 +1,43 @@
+{
+  "name": "latex-editor",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Lokaler LaTeX-Editor mit Browser-UI",
+  "scripts": {
+    "dev": "concurrently -k -n server,client -c blue,magenta \"node --watch server/index.js\" \"vite\"",
+    "build": "vite build",
+    "start": "vite build && node server/index.js",
+    "serve": "node server/index.js",
+    "typecheck": "tsc --noEmit -p client"
+  },
+  "dependencies": {
+    "@codemirror/autocomplete": "^6.20.4",
+    "@codemirror/commands": "^6.11.1",
+    "@codemirror/language": "^6.13.1",
+    "@codemirror/lint": "^6.9.7",
+    "@codemirror/search": "^6.7.2",
+    "@codemirror/state": "^6.7.6",
+    "@codemirror/view": "^6.43.15",
+    "@fontsource-variable/inter": "^5.3.0",
+    "@fontsource-variable/jetbrains-mono": "^5.3.0",
+    "@fontsource-variable/source-serif-4": "^5.3.1",
+    "@lezer/highlight": "^1.2.5",
+    "chokidar": "^6.0.0",
+    "express": "^5.3.0",
+    "katex": "^0.19.1",
+    "lucide-react": "^1.69.0",
+    "pdfjs-dist": "^6.5.438",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "ws": "^8.22.1"
+  },
+  "devDependencies": {
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.2.1",
+    "concurrently": "^10.0.6",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.6"
+  }
+}
