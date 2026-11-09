@@ -158,7 +158,7 @@ type PromptState = {
 const DialogCtx = createContext<{
   prompt: (o: { title: string; message?: string; value?: string; placeholder?: string; confirm?: string }) => Promise<string | null>;
   confirm: (o: { title: string; message?: string; confirm?: string; danger?: boolean }) => Promise<boolean>;
-  toast: (msg: string, kind?: 'success' | 'error' | 'info') => void;
+  toast: (msg: string, kind?: 'success' | 'error' | 'info', durationMs?: number) => void;
 }>(null!);
 
 export const useDialogs = () => useContext(DialogCtx);
@@ -184,10 +184,10 @@ export function DialogProvider({ children }: { children: ReactNode }) {
       }),
     [],
   );
-  const toast = useCallback((msg: string, kind: 'success' | 'error' | 'info' = 'info') => {
+  const toast = useCallback((msg: string, kind: 'success' | 'error' | 'info' = 'info', durationMs?: number) => {
     const id = Math.random();
     setToasts((t) => [...t.slice(-3), { id, msg, kind }]);
-    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), kind === 'error' ? 6000 : 3200);
+    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), durationMs ?? (kind === 'error' ? 6000 : 3200));
   }, []);
 
   useEffect(() => {

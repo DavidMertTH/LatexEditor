@@ -271,7 +271,10 @@ app.post(
     const abs = safeJoin(root, req.query.path);
     await fs.mkdir(path.dirname(abs), { recursive: true });
     markWrite(abs);
-    await fs.writeFile(abs, req.body);
+    // exclusive=1: niemals überschreiben (z. B. eingefügte Bilder) – Konflikt melden
+    await fs.writeFile(abs, req.body, { flag: req.query.exclusive ? 'wx' : 'w' }).catch((err) => {
+      throw err.code === 'EEXIST' ? httpError(409, 'Datei existiert bereits') : err;
+    });
     res.json({ ok: true });
   }),
 );

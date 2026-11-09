@@ -22,6 +22,7 @@ import { latexSupport } from './language';
 import { latexCompletion } from './completion';
 import { visualMode, visualConfig, visualBodyStart, type VisualConfig } from './visual';
 import { toggleCommand, toggleLineComment } from './format';
+import { imageInput, trackPosition, takePosition, clampToBody, insertFigures, type FigureItem } from './images';
 import type { LogEntry, ProjectIndex } from '../api';
 
 export type EditorMode = 'source' | 'visual';
@@ -34,6 +35,8 @@ export interface ControllerOptions {
   onSave: () => void;
   onCompile: () => void;
   onSyncForward: () => void;
+  /** Bilder wurden eingefügt/abgelegt; `ticket` merkt sich die Einfügeposition (siehe insertImages). */
+  onImages?: (path: string, files: File[], ticket: number) => void;
 }
 
 // line flash used after jumping to a location
@@ -99,6 +102,7 @@ export class EditorController {
       EditorView.lineWrapping,
       isTex ? latexSupport() : [],
       isTex ? latexCompletion(() => ({ index: this.opts.getIndex(), currentFile: this.current ?? '' })) : [],
+      /\.(tex|ltx)$/i.test(path) ? imageInput((files, view, pos) => this.handleImages(files, view, pos)) : [],
       this.configComp.of(visualConfig.of(this.visualCfg())),
       this.modeComp.of(this.modeExtension(path)),
       this.fontComp.of(EditorView.theme({ '&': { '--editor-font-size': `${this.fontSize}px` } as Record<string, string> })),
@@ -244,6 +248,23 @@ export class EditorController {
     this.view.focus();
     clearTimeout(this.flashTimer);
     if (flash) this.flashTimer = window.setTimeout(() => this.view.dispatch({ effects: flashEffect.of(null) }), 1800);
+  }
+
+  private handleImages(files: File[], view: EditorView, pos: number): boolean {
+    if (!this.current || !this.opts.onImages || view !== this.view) return false;
+    const ticket = trackPosition(view, clampToBody(view.state, pos));
+    this.opts.onImages(this.current, files, ticket);
+    return true;
+  }
+
+  /** Snippet für hochgeladene Bilder an der gemerkten Stelle einfügen. false, wenn die Datei inzwischen gewechselt wurde. */
+  insertImages(path: string, ticket: number, items: FigureItem[]): boolean {
+    if (path !== this.current) return false;
+    const pos = takePosition(this.view, ticket);
+    if (pos === null) return false;
+    if (items.length) insertFigures(this.view, pos, items);
+    this.view.focus();
+    return true;
   }
 
   cursorLine(): number {

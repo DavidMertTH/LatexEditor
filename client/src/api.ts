@@ -69,7 +69,7 @@ async function req<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, init);
   const ct = res.headers.get('content-type') || '';
   const body = ct.includes('json') ? await res.json() : await res.text();
-  if (!res.ok) throw new Error((body && body.error) || `Fehler ${res.status}`);
+  if (!res.ok) throw Object.assign(new Error((body && body.error) || `Fehler ${res.status}`), { status: res.status });
   return body as T;
 }
 
@@ -95,7 +95,13 @@ export const api = {
   readFile: (id: string, path: string) => req<{ content: string; mtime: number }>(`/api/p/${id}/file?path=${enc(path)}`),
   writeFile: (id: string, path: string, content: string) =>
     req<{ ok: boolean }>(`/api/p/${id}/file?path=${enc(path)}`, { method: 'PUT', headers: { 'content-type': 'text/plain; charset=utf-8' }, body: content }),
-  upload: (id: string, path: string, data: Blob) => req(`/api/p/${id}/upload?path=${enc(path)}`, { method: 'POST', body: data }),
+  upload: (id: string, path: string, data: Blob, opts: { exclusive?: boolean } = {}) =>
+    req(`/api/p/${id}/upload?path=${enc(path)}${opts.exclusive ? '&exclusive=1' : ''}`, {
+      method: 'POST',
+      // ohne Content-Type (z. B. .eps/.cls unter Windows) ignoriert der Server den Body
+      headers: { 'content-type': data.type || 'application/octet-stream' },
+      body: data,
+    }),
   fs: (id: string, op: 'mkdir' | 'create' | 'rename' | 'delete', path: string, extra: Record<string, unknown> = {}) =>
     req<{ ok: boolean; tree: TreeNode[] }>(`/api/p/${id}/fs`, json('POST', { op, path, ...extra })),
   index: (id: string) => req<ProjectIndex>(`/api/p/${id}/index`),

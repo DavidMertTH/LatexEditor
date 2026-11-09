@@ -32,7 +32,8 @@ import { PdfViewer, type PdfViewerHandle } from './PdfViewer';
 import { LogPanel } from './LogPanel';
 import { GitPanel, GitPill, useGitSync } from './GitSync';
 import { Menu, Popover, Segmented, usePersistentState, useDialogs, modKey, type ThemePref } from '../ui';
-import { flatten } from '../tree';
+import { dirs, flatten } from '../tree';
+import { graphicxLoaded, handledDrops, imageBaseName, imageTarget, includePath, isImageFile, prepareImage, uniqueLabel, uniquePath, type FigureItem } from '../editor/images';
 
 type Layout = 'editor' | 'split' | 'pdf';
 type OutlineItem = { level: number; title: string; line: number };
@@ -130,6 +131,7 @@ export function Workspace({ projectId, onClose, theme, setTheme }: { projectId: 
         onSave: () => saveAll(true),
         onCompile: () => saveAll(true),
         onSyncForward: () => syncForward(),
+        onImages: (path, files, ticket) => insertImages(path, files, ticket),
       }),
     [projectId],
   );
@@ -530,20 +532,81 @@ export function Workspace({ projectId, onClose, theme, setTheme }: { projectId: 
     window.addEventListener('pointerup', up);
   };
 
-  // ── drop images onto editor ─────────────────────────────────────────────
-  const onEditorDrop = async (e: React.DragEvent) => {
-    setDropActive(false);
-    if (!e.dataTransfer.files.length) return;
-    e.preventDefault();
-    const paths = await upload('', e.dataTransfer.files);
-    const images = paths.filter((p) => /\.(png|jpe?g|pdf|eps)$/i.test(p));
-    if (images.length && isTex) {
-      const v = controller.view;
-      const pos = v.posAtCoords({ x: e.clientX, y: e.clientY }) ?? v.state.selection.main.head;
-      const insert = images.map((p) => `\\begin{figure}[h]\n  \\centering\n  \\includegraphics[width=0.8\\linewidth]{${p}}\n  \\caption{${p.replace(/\.[^.]+$/, '')}}\n\\end{figure}\n`).join('\n');
-      const line = v.state.doc.lineAt(pos);
-      v.dispatch({ changes: { from: line.to, insert: '\n' + insert } });
+  // ── paste / drop images into the editor ────────────────────────────────
+  // Der Editor fängt Strg+V bzw. abgelegte Bilder ab (editor/images.ts) und ruft
+  // dies auf: Bilder in den Bilder-Ordner hochladen, dann Snippet einfügen.
+  async function insertImages(path: string, files: File[], ticket: number) {
+    const mainSetting = settingsRef.current?.mainFile ?? path;
+    const readText = async (p: string) => controller.getContent(p) ?? (await api.readFile(projectId, p).then((r) => r.content).catch(() => null));
+    const figures: FigureItem[] = [];
+    const saved: string[] = [];
+    const converted: string[] = [];
+    try {
+      const current = (await readText(path)) ?? '';
+      // Eigenständige Dokumente (mit \documentclass) sind ihr eigenes Hauptdokument.
+      const main = /\\documentclass/.test(current) ? path : mainSetting;
+      const mainSource = main === path ? current : ((await readText(main)) ?? '');
+      const tree = await api.tree(projectId);
+      const allFiles = flatten(tree);
+      const target = imageTarget(main, mainSource, allFiles, dirs(tree));
+      const taken = new Set(allFiles.map((f) => f.toLowerCase()));
+      const labels = new Set(indexRef.current?.labels.map((l) => l.label) ?? []);
+      const now = new Date();
+      for (const file of files) {
+        try {
+          const img = await prepareImage(file);
+          const base = imageBaseName(file, now);
+          let dest = uniquePath(target.dir, base, img.ext, taken);
+          for (let attempt = 0; ; attempt++) {
+            try {
+              await api.upload(projectId, dest, img.blob, { exclusive: true });
+              break;
+            } catch (e) {
+              if ((e as { status?: number }).status !== 409 || attempt > 20) throw e;
+              taken.add(dest.toLowerCase());
+              dest = uniquePath(target.dir, base, img.ext, taken);
+            }
+          }
+          taken.add(dest.toLowerCase());
+          saved.push(dest);
+          if (img.convertedFrom) converted.push(img.convertedFrom.toUpperCase());
+          figures.push({ path: includePath(dest, target), label: uniqueLabel(dest.split('/').pop()!.replace(/\.[^.]+$/, ''), labels) });
+        } catch (e) {
+          toast(`„${file.name || 'Bild'}“ konnte nicht eingefügt werden: ${(e as Error).message}`, 'error');
+        }
+      }
+      if (saved.length) {
+        const fresh = await api.tree(projectId).catch(() => null);
+        if (fresh) {
+          setTree(fresh);
+          controller.setFiles(flatten(fresh)); // damit der visuelle Modus das Bild sofort findet
+        }
+      }
+      if (!controller.insertImages(path, ticket, figures)) {
+        if (saved.length) toast(`Bild gespeichert unter „${saved[0]}“ – Snippet nicht eingefügt, weil die Datei gewechselt wurde.`, 'info', 6000);
+        return;
+      }
+      if (!saved.length) return;
+      const where = saved.length === 1 ? `„${saved[0]}“` : `${saved.length} Bilder in „${target.dir || 'Projektordner'}“`;
+      const conv = converted.length ? ` (${[...new Set(converted)].join(', ')} in PNG umgewandelt)` : '';
+      toast(`${saved.length === 1 ? 'Bild gespeichert als ' : ''}${where}${saved.length === 1 ? '' : ' gespeichert'}${conv}`, 'success');
+      if (!(await graphicxLoaded(main, mainSource, allFiles, readText))) {
+        toast(`Hinweis: Das Paket „graphicx“ wird in „${main}“ nicht geladen. Ergänze \\usepackage{graphicx} in der Präambel, damit das Bild im PDF erscheint.`, 'info', 9000);
+      }
+    } catch (e) {
+      controller.insertImages(path, ticket, []); // gemerkte Position freigeben
+      toast(`Bild konnte nicht eingefügt werden: ${(e as Error).message}`, 'error');
     }
+  }
+
+  // Alles, was der Editor nicht selbst übernommen hat, landet wie bisher im Projektordner.
+  const onEditorDrop = (e: React.DragEvent) => {
+    setDropActive(false);
+    const handled = handledDrops.has(e.nativeEvent);
+    const rest = Array.from(e.dataTransfer.files).filter((f) => !handled || !isImageFile(f));
+    if (!rest.length) return;
+    e.preventDefault();
+    upload('', rest);
   };
 
   // ── derived UI state ───────────────────────────────────────────────────

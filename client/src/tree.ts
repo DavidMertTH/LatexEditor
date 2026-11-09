@@ -7,3 +7,12 @@ export function flatten(tree: TreeNode[], acc: string[] = []): string[] {
   }
   return acc;
 }
+
+export function dirs(tree: TreeNode[], acc: string[] = []): string[] {
+  for (const n of tree) {
+    if (n.type !== 'dir') continue;
+    acc.push(n.path);
+    dirs(n.children ?? [], acc);
+  }
+  return acc;
+}
